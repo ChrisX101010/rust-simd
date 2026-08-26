@@ -1,0 +1,10 @@
+kernel=vector_add
+language=zig
+implementation=scalar
+elements=16777216
+warmup=5
+runs=30
+total_ns=477932029
+min_ns=15269162
+median_ns=16001639
+checksum=16760315880.000

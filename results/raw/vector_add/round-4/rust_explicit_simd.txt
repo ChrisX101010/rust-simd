@@ -1,0 +1,10 @@
+kernel=vector_add
+language=rust
+implementation=explicit_simd
+elements=16777216
+warmup=5
+runs=30
+total_ns=559202800
+min_ns=14156745
+median_ns=15732075
+checksum=16760315880.000

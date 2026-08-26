@@ -1,0 +1,10 @@
+kernel=vector_add
+language=rust
+implementation=automatic
+elements=16777216
+warmup=5
+runs=30
+total_ns=456439794
+min_ns=14241554
+median_ns=15020998
+checksum=16760315880.000

@@ -1,0 +1,28 @@
+# Rust
+rust/target/
+
+# Zig build artifacts/cache
+zig/.zig-cache/
+zig/zig-out/
+
+# Benchmark build artifacts
+bench/build/
+
+# Local benchmark binaries
+/zig_vector_add
+/zig_vector_add_asm
+/zig_vector_add_compare
+/zig_vector_add_compare_asm
+/zig_vector_add_simd
+/zig_bench_scalar
+/zig_bench_simd
+
+# Benchmark outputs
+results/raw/*.txt
+results/raw/*.csv
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

@@ -1,0 +1,10 @@
+kernel=vector_add
+language=zig
+implementation=explicit_simd
+elements=16777216
+warmup=5
+runs=30
+total_ns=411040253
+min_ns=13270272
+median_ns=13599085
+checksum=16760315880.000
