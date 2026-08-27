@@ -1,6 +1,6 @@
 pub mod ffi;
 
-pub use ffi::{vector_add_zig, vector_add_zig_simd};
+pub use ffi::{fma_zig, fma_zig_simd, vector_add_zig, vector_add_zig_simd};
 
 pub fn vector_add(a: &[f32], b: &[f32], out: &mut [f32]) {
     assert_eq!(a.len(), b.len());

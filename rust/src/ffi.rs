@@ -1,4 +1,8 @@
 unsafe extern "C" {
+    fn fma_f32(a: *const f32, b: *const f32, c: *const f32, out: *mut f32, len: usize);
+
+    fn fma_f32_simd(a: *const f32, b: *const f32, c: *const f32, out: *mut f32, len: usize);
+
     fn vector_add_f32(a: *const f32, b: *const f32, out: *mut f32, len: usize);
 
     fn vector_add_f32_simd(a: *const f32, b: *const f32, out: *mut f32, len: usize);
@@ -24,6 +28,40 @@ pub fn vector_add_zig_simd(a: &[f32], b: &[f32], out: &mut [f32]) {
 
     unsafe {
         vector_add_f32_simd(a.as_ptr(), b.as_ptr(), out.as_mut_ptr(), out.len());
+    }
+}
+
+/// Computes `a * b + c` through the Zig backend.
+pub fn fma_zig(a: &[f32], b: &[f32], c: &[f32], out: &mut [f32]) {
+    assert_eq!(a.len(), b.len(), "input lengths must match");
+    assert_eq!(a.len(), c.len(), "input lengths must match");
+    assert_eq!(a.len(), out.len(), "output length must match");
+
+    unsafe {
+        fma_f32(
+            a.as_ptr(),
+            b.as_ptr(),
+            c.as_ptr(),
+            out.as_mut_ptr(),
+            out.len(),
+        );
+    }
+}
+
+/// Computes `a * b + c` through the Zig explicit-SIMD backend.
+pub fn fma_zig_simd(a: &[f32], b: &[f32], c: &[f32], out: &mut [f32]) {
+    assert_eq!(a.len(), b.len(), "input lengths must match");
+    assert_eq!(a.len(), c.len(), "input lengths must match");
+    assert_eq!(a.len(), out.len(), "output length must match");
+
+    unsafe {
+        fma_f32_simd(
+            a.as_ptr(),
+            b.as_ptr(),
+            c.as_ptr(),
+            out.as_mut_ptr(),
+            out.len(),
+        );
     }
 }
 
@@ -63,6 +101,41 @@ mod tests {
     #[test]
     fn ffi_large_input() {
         check_case(100_003);
+    }
+
+    #[test]
+    fn fma_ffi_matches_reference() {
+        for n in [0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 100_003] {
+            let a: Vec<f32> = (0..n).map(|i| (i % 997) as f32 * 0.001).collect();
+
+            let b: Vec<f32> = (0..n).map(|i| (i % 991) as f32 * 0.002).collect();
+
+            let c: Vec<f32> = (0..n).map(|i| (i % 983) as f32 * 0.003).collect();
+
+            let mut scalar = vec![0.0f32; n];
+            let mut simd = vec![0.0f32; n];
+
+            fma_zig(&a, &b, &c, &mut scalar);
+            fma_zig_simd(&a, &b, &c, &mut simd);
+
+            for i in 0..n {
+                let reference = a[i] * b[i] + c[i];
+
+                assert!(
+                    (scalar[i] - reference).abs() <= 1.0e-6,
+                    "scalar FMA mismatch at {i}: got {}, expected {}",
+                    scalar[i],
+                    reference
+                );
+
+                assert!(
+                    (simd[i] - reference).abs() <= 1.0e-6,
+                    "SIMD FMA mismatch at {i}: got {}, expected {}",
+                    simd[i],
+                    reference
+                );
+            }
+        }
     }
 
     #[test]
