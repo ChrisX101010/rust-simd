@@ -26,3 +26,6 @@ results/raw/*.csv
 .idea/
 *.swp
 .DS_Store
+
+# External consumer build artifacts
+consumer-test/target/

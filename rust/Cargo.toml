@@ -1,6 +1,14 @@
 [package]
-name = "rust"
+name = "rust-zig-simd"
 version = "0.1.0"
 edition = "2024"
+authors = ["Hristo"]
+description = "Experimental Rust and Zig SIMD interoperability and optimization research"
+license = "MIT"
+repository = "https://github.com/your-user/rust-zig-simd"
+readme = "../README.md"
 
-[dependencies]
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]

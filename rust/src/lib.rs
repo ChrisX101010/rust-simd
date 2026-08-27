@@ -1,3 +1,7 @@
+pub mod ffi;
+
+pub use ffi::{vector_add_zig, vector_add_zig_simd};
+
 pub fn vector_add(a: &[f32], b: &[f32], out: &mut [f32]) {
     assert_eq!(a.len(), b.len());
     assert_eq!(a.len(), out.len());
@@ -10,18 +14,6 @@ pub fn vector_add(a: &[f32], b: &[f32], out: &mut [f32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn check_case(n: usize) {
-        let a: Vec<f32> = (0..n).map(|i| i as f32).collect();
-        let b: Vec<f32> = (0..n).map(|i| (i * 3) as f32).collect();
-        let mut out = vec![0.0; n];
-
-        vector_add(&a, &b, &mut out);
-
-        for i in 0..n {
-            assert_eq!(out[i], a[i] + b[i], "mismatch at index {i}");
-        }
-    }
 
     #[test]
     fn vector_add_basic() {
@@ -37,7 +29,15 @@ mod tests {
     #[test]
     fn vector_add_edge_lengths() {
         for n in [0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33] {
-            check_case(n);
+            let a: Vec<f32> = (0..n).map(|i| i as f32).collect();
+            let b: Vec<f32> = (0..n).map(|i| (i * 3) as f32).collect();
+            let mut out = vec![0.0f32; n];
+
+            vector_add(&a, &b, &mut out);
+
+            for i in 0..n {
+                assert_eq!(out[i], a[i] + b[i]);
+            }
         }
     }
 
