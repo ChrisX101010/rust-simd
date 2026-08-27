@@ -1,35 +1,16 @@
 unsafe extern "C" {
-    fn vector_add_f32(
-        a: *const f32,
-        b: *const f32,
-        out: *mut f32,
-        len: usize,
-    );
+    fn vector_add_f32(a: *const f32, b: *const f32, out: *mut f32, len: usize);
 
-    fn vector_add_f32_simd(
-        a: *const f32,
-        b: *const f32,
-        out: *mut f32,
-        len: usize,
-    );
+    fn vector_add_f32_simd(a: *const f32, b: *const f32, out: *mut f32, len: usize);
 }
 
 /// Calls the Zig scalar implementation through the C-compatible ABI.
-pub fn vector_add_zig(
-    a: &[f32],
-    b: &[f32],
-    out: &mut [f32],
-) {
+pub fn vector_add_zig(a: &[f32], b: &[f32], out: &mut [f32]) {
     assert_eq!(a.len(), b.len(), "input lengths must match");
     assert_eq!(a.len(), out.len(), "output length must match");
 
     unsafe {
-        vector_add_f32(
-            a.as_ptr(),
-            b.as_ptr(),
-            out.as_mut_ptr(),
-            out.len(),
-        );
+        vector_add_f32(a.as_ptr(), b.as_ptr(), out.as_mut_ptr(), out.len());
     }
 }
 
@@ -37,21 +18,12 @@ pub fn vector_add_zig(
 ///
 /// The Rust-facing API is safe because the wrapper validates all slice
 /// length invariants before crossing the unsafe FFI boundary.
-pub fn vector_add_zig_simd(
-    a: &[f32],
-    b: &[f32],
-    out: &mut [f32],
-) {
+pub fn vector_add_zig_simd(a: &[f32], b: &[f32], out: &mut [f32]) {
     assert_eq!(a.len(), b.len(), "input lengths must match");
     assert_eq!(a.len(), out.len(), "output length must match");
 
     unsafe {
-        vector_add_f32_simd(
-            a.as_ptr(),
-            b.as_ptr(),
-            out.as_mut_ptr(),
-            out.len(),
-        );
+        vector_add_f32_simd(a.as_ptr(), b.as_ptr(), out.as_mut_ptr(), out.len());
     }
 }
 
@@ -60,20 +32,13 @@ mod tests {
     use super::*;
 
     fn expected(a: &[f32], b: &[f32]) -> Vec<f32> {
-        a.iter()
-            .zip(b)
-            .map(|(&x, &y)| x + y)
-            .collect()
+        a.iter().zip(b).map(|(&x, &y)| x + y).collect()
     }
 
     fn check_case(n: usize) {
-        let a: Vec<f32> = (0..n)
-            .map(|i| (i % 1000) as f32)
-            .collect();
+        let a: Vec<f32> = (0..n).map(|i| (i % 1000) as f32).collect();
 
-        let b: Vec<f32> = (0..n)
-            .map(|i| ((i * 3) % 1000) as f32)
-            .collect();
+        let b: Vec<f32> = (0..n).map(|i| ((i * 3) % 1000) as f32).collect();
 
         let expected = expected(&a, &b);
 

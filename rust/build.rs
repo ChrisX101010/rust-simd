@@ -1,34 +1,22 @@
-
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    let manifest_dir = PathBuf::from(
-        env::var("CARGO_MANIFEST_DIR")
-            .expect("CARGO_MANIFEST_DIR is not set")
-    );
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is not set"));
 
     let zig_source = manifest_dir.join("vendor/zig/vector_add.zig");
 
-    println!(
-        "cargo:rerun-if-changed={}",
-        zig_source.display()
-    );
+    println!("cargo:rerun-if-changed={}", zig_source.display());
 
     println!("cargo:rerun-if-env-changed=RUST_ZIG_SIMD_NATIVE");
 
-    let out_dir = PathBuf::from(
-        env::var("OUT_DIR")
-            .expect("OUT_DIR is not set")
-    );
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is not set"));
 
     let library = out_dir.join("libsimd.a");
 
-    let emit_bin = format!(
-        "-femit-bin={}",
-        library.display()
-    );
+    let emit_bin = format!("-femit-bin={}", library.display());
 
     let mut command = Command::new("zig");
 
@@ -42,13 +30,9 @@ fn main() {
         command.arg("-mcpu=native");
     }
 
-    command
-        .arg("-static")
-        .arg(&emit_bin);
+    command.arg("-static").arg(&emit_bin);
 
-    let status = command
-        .status()
-        .expect("failed to execute Zig compiler");
+    let status = command.status().expect("failed to execute Zig compiler");
 
     if !status.success() {
         panic!("Zig failed to build the FFI library");
@@ -61,10 +45,7 @@ fn main() {
         );
     }
 
-    println!(
-        "cargo:rustc-link-search=native={}",
-        out_dir.display()
-    );
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
 
     println!("cargo:rustc-link-lib=static=simd");
 }

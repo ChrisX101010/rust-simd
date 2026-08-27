@@ -19,13 +19,9 @@ fn checksum(data: &[f32]) -> f64 {
 }
 
 fn main() {
-    let a: Vec<f32> = (0..N)
-        .map(|i| (i % 1000) as f32)
-        .collect();
+    let a: Vec<f32> = (0..N).map(|i| (i % 1000) as f32).collect();
 
-    let b: Vec<f32> = (0..N)
-        .map(|i| ((i * 3) % 1000) as f32)
-        .collect();
+    let b: Vec<f32> = (0..N).map(|i| ((i * 3) % 1000) as f32).collect();
 
     let mut out = vec![0.0f32; N];
 
@@ -38,11 +34,7 @@ fn main() {
     for _ in 0..RUNS {
         let start = Instant::now();
 
-        vector_add(
-            black_box(&a),
-            black_box(&b),
-            black_box(&mut out),
-        );
+        vector_add(black_box(&a), black_box(&b), black_box(&mut out));
 
         timings.push(start.elapsed().as_nanos());
     }
