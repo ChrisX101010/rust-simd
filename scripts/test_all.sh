@@ -29,9 +29,9 @@ rustc +nightly \
     "$ROOT/experiments/rust/vector_add_portable_simd.rs" \
     -C opt-level=3 \
     -C target-cpu=native \
-    -o /tmp/rust_zig_simd_portable_simd
+    -o /tmp/rust_simd_portable_simd
 
-/tmp/rust_zig_simd_portable_simd
+/tmp/rust_simd_portable_simd
 
 echo
 echo "[5/7] Standalone FFI integration tests"

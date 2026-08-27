@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-simd-rust-PLACEHOLDER = { path = "../rust" }
+rust-simd = { path = "../rust" }
