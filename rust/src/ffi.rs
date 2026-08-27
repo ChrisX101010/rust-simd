@@ -12,6 +12,10 @@ unsafe extern "C" {
     fn reduce_sum_f32_simd(data: *const f32, len: usize) -> f32;
 
     fn reduce_sum_f32_simd_4acc(data: *const f32, len: usize) -> f32;
+
+    fn dot_f32(a: *const f32, b: *const f32, len: usize) -> f32;
+
+    fn dot_f32_simd(a: *const f32, b: *const f32, len: usize) -> f32;
 }
 
 /// Calls the Zig scalar implementation through the C-compatible ABI.
@@ -86,6 +90,20 @@ pub fn reduce_sum_zig_simd_4acc(data: &[f32]) -> f32 {
     unsafe { reduce_sum_f32_simd_4acc(data.as_ptr(), data.len()) }
 }
 
+/// Computes a dot product through the Zig scalar backend.
+pub fn dot_zig(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len(), "input lengths must match");
+
+    unsafe { dot_f32(a.as_ptr(), b.as_ptr(), a.len()) }
+}
+
+/// Computes a dot product through the Zig SIMD backend.
+pub fn dot_zig_simd(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len(), "input lengths must match");
+
+    unsafe { dot_f32_simd(a.as_ptr(), b.as_ptr(), a.len()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,6 +140,33 @@ mod tests {
     #[test]
     fn ffi_large_input() {
         check_case(100_003);
+    }
+
+    #[test]
+    fn dot_ffi_matches_reference() {
+        for n in [0, 1, 7, 8, 9, 15, 16, 31, 32, 33, 100_003] {
+            let a: Vec<f32> = (0..n).map(|i| ((i % 997) as f32) * 0.001).collect();
+
+            let b: Vec<f32> = (0..n).map(|i| ((i % 991) as f32) * 0.002).collect();
+
+            let reference: f64 = a
+                .iter()
+                .zip(&b)
+                .map(|(&x, &y)| (x as f64) * (y as f64))
+                .sum();
+
+            let scalar = dot_zig(&a, &b) as f64;
+            let simd = dot_zig_simd(&a, &b) as f64;
+
+            for (name, value) in [("scalar", scalar), ("simd", simd)] {
+                let error = (value - reference).abs();
+
+                assert!(
+                    error <= reference.abs() * 1.0e-5 + 1.0e-2,
+                    "{name} dot error too large: value={value}, reference={reference}, error={error}"
+                );
+            }
+        }
     }
 
     #[test]

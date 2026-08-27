@@ -3,6 +3,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+SOURCE="$ROOT/zig/src/ffi/vector_add.zig"
+VENDOR="$ROOT/rust/vendor/zig/vector_add.zig"
+
+if ! cmp -s "$SOURCE" "$VENDOR"; then
+    echo "ERROR: Zig backend source and vendored crate copy differ."
+    echo "Run: ./scripts/sync_vendor.sh"
+    exit 1
+fi
+
+
 echo "========================================"
 echo " Rust-Zig SIMD Control Lab"
 echo " Full Validation Suite"
@@ -39,7 +49,7 @@ echo "[5/7] Standalone FFI integration tests"
 mkdir -p "$ROOT/bench/build/ffi"
 
 zig build-lib \
-    "$ROOT/zig/src/ffi/vector_add.zig" \
+    "$ROOT/rust/vendor/zig/vector_add.zig" \
     -O ReleaseFast \
     -mcpu=native \
     -static \
