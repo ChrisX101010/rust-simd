@@ -1,4 +1,4 @@
-use rust_zig_simd::{
+use rust_simd::{
     vector_add,
     vector_add_zig,
     vector_add_zig_simd,
