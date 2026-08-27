@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Zig 0.16.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Show toolchain versions
+        run: |
+          rustc --version
+          cargo --version
+          rustc +nightly --version
+          zig version
+
+      - name: Run full validation suite
+        run: ./scripts/test_all.sh
+
+      - name: Validate packaged Rust crate
+        working-directory: rust
+        run: cargo package

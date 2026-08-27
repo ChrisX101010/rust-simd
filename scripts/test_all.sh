@@ -9,22 +9,22 @@ echo " Full Validation Suite"
 echo "========================================"
 
 echo
-echo "[1/6] Rust portable/default tests"
+echo "[1/7] Rust portable/default tests"
 cargo clean --manifest-path "$ROOT/rust/Cargo.toml"
 cargo test --manifest-path "$ROOT/rust/Cargo.toml"
 
 echo
-echo "[2/6] Rust native-target tests"
+echo "[2/7] Rust native-target tests"
 cargo clean --manifest-path "$ROOT/rust/Cargo.toml"
 RUST_ZIG_SIMD_NATIVE=1 \
     cargo test --manifest-path "$ROOT/rust/Cargo.toml"
 
 echo
-echo "[3/6] Zig unit tests"
+echo "[3/7] Zig unit tests"
 zig build test --build-file "$ROOT/zig/build.zig"
 
 echo
-echo "[4/6] Rust nightly portable-SIMD experiment"
+echo "[4/7] Rust nightly portable-SIMD experiment"
 rustc +nightly \
     "$ROOT/experiments/rust/vector_add_portable_simd.rs" \
     -C opt-level=3 \
@@ -34,7 +34,7 @@ rustc +nightly \
 /tmp/rust_zig_simd_portable_simd
 
 echo
-echo "[5/6] Standalone FFI integration tests"
+echo "[5/7] Standalone FFI integration tests"
 
 mkdir -p "$ROOT/bench/build/ffi"
 
@@ -56,10 +56,17 @@ rustc \
 "$ROOT/bench/build/ffi/ffi_tests"
 
 echo
-echo "[6/6] External consumer test"
+echo "[6/7] External consumer test"
 
 cargo run \
     --manifest-path "$ROOT/consumer-test/Cargo.toml"
+
+echo
+echo "[7/7] Rust package validation"
+(
+    cd "$ROOT/rust"
+    cargo package
+)
 
 echo
 echo "========================================"
