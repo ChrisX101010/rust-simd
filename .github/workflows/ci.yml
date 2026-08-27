@@ -4,22 +4,30 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  validate:
+  test:
+    name: Full validation
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Install Zig 0.16.0
+      - name: Install Zig
         uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -29,11 +37,18 @@ jobs:
           rustc --version
           cargo --version
           rustc +nightly --version
+          cargo +nightly --version
           zig version
 
-      - name: Run full validation suite
+      - name: Check formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+
+      - name: Full validation suite
         run: ./scripts/test_all.sh
 
-      - name: Validate packaged Rust crate
+      - name: Package Rust crate
         working-directory: rust
         run: cargo package
