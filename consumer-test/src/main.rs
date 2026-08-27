@@ -1,36 +1,25 @@
-use rust_simd::{
-    vector_add,
-    vector_add_zig,
-    vector_add_zig_simd,
-};
+use rust_simd::{backend_name, dot, fma, reduce_sum, vector_add};
 
 fn main() {
-    let a = [
-        1.0f32, 2.0, 3.0, 4.0,
-        5.0, 6.0, 7.0, 8.0,
-    ];
+    let a = [1.0f32, 2.0, 3.0, 4.0];
+    let b = [5.0f32, 6.0, 7.0, 8.0];
 
-    let b = [
-        10.0f32, 20.0, 30.0, 40.0,
-        50.0, 60.0, 70.0, 80.0,
-    ];
+    let mut added = [0.0f32; 4];
+    vector_add(&a, &b, &mut added);
 
-    let expected = [
-        11.0f32, 22.0, 33.0, 44.0,
-        55.0, 66.0, 77.0, 88.0,
-    ];
+    assert_eq!(added, [6.0, 8.0, 10.0, 12.0]);
 
-    let mut rust = [0.0f32; 8];
-    let mut zig_scalar = [0.0f32; 8];
-    let mut zig_simd = [0.0f32; 8];
+    let mut fused = [0.0f32; 4];
+    fma(&a, &b, &[1.0; 4], &mut fused);
 
-    vector_add(&a, &b, &mut rust);
-    vector_add_zig(&a, &b, &mut zig_scalar);
-    vector_add_zig_simd(&a, &b, &mut zig_simd);
+    assert_eq!(fused, [6.0, 13.0, 22.0, 33.0]);
 
-    assert_eq!(rust, expected);
-    assert_eq!(zig_scalar, expected);
-    assert_eq!(zig_simd, expected);
+    let sum = reduce_sum(&a);
+    assert!((sum - 10.0).abs() <= 1.0e-6);
 
-    println!("external consumer test: PASS");
+    let product = dot(&a, &b);
+    assert!((product - 70.0).abs() <= 1.0e-6);
+
+    println!("public API consumer: PASS");
+    println!("selected backend: {}", backend_name());
 }

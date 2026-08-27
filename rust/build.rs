@@ -9,14 +9,16 @@ fn main() {
     let zig_source = manifest_dir.join("vendor/zig/vector_add.zig");
 
     println!("cargo:rerun-if-changed={}", zig_source.display());
-
     println!("cargo:rerun-if-env-changed=RUST_ZIG_SIMD_NATIVE");
+
+    println!("cargo:rustc-check-cfg=cfg(rust_zig_simd_native)");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is not set"));
 
     let library = out_dir.join("libsimd.a");
-
     let emit_bin = format!("-femit-bin={}", library.display());
+
+    let native = env::var_os("RUST_ZIG_SIMD_NATIVE").is_some();
 
     let mut command = Command::new("zig");
 
@@ -26,8 +28,9 @@ fn main() {
         .arg("-O")
         .arg("ReleaseFast");
 
-    if env::var_os("RUST_ZIG_SIMD_NATIVE").is_some() {
+    if native {
         command.arg("-mcpu=native");
+        println!("cargo:rustc-cfg=rust_zig_simd_native");
     }
 
     command.arg("-static").arg(&emit_bin);
@@ -46,6 +49,5 @@ fn main() {
     }
 
     println!("cargo:rustc-link-search=native={}", out_dir.display());
-
     println!("cargo:rustc-link-lib=static=simd");
 }
