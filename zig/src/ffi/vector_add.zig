@@ -114,3 +114,70 @@ pub export fn fma_f32_muladd_simd(
         out[i] = @mulAdd(f32, a[i], b[i], c[i]);
     }
 }
+
+pub export fn reduce_sum_f32(
+    data: [*]const f32,
+    len: usize,
+) f32 {
+    var i: usize = 0;
+    var total: f32 = 0.0;
+
+    while (i < len) : (i += 1) {
+        total += data[i];
+    }
+
+    return total;
+}
+
+pub export fn reduce_sum_f32_simd(
+    data: [*]const f32,
+    len: usize,
+) f32 {
+    const V = @Vector(8, f32);
+
+    var i: usize = 0;
+    var acc = @as(V, @splat(0.0));
+
+    while (i + 8 <= len) : (i += 8) {
+        const v: V = data[i..][0..8].*;
+        acc += v;
+    }
+
+    var total: f32 = @reduce(.Add, acc);
+
+    while (i < len) : (i += 1) {
+        total += data[i];
+    }
+
+    return total;
+}
+
+pub export fn reduce_sum_f32_simd_4acc(
+    data: [*]const f32,
+    len: usize,
+) f32 {
+    const V = @Vector(8, f32);
+
+    var i: usize = 0;
+
+    var acc0 = @as(V, @splat(0.0));
+    var acc1 = @as(V, @splat(0.0));
+    var acc2 = @as(V, @splat(0.0));
+    var acc3 = @as(V, @splat(0.0));
+
+    while (i + 32 <= len) : (i += 32) {
+        acc0 += data[i..][0..8].*;
+        acc1 += data[i + 8 ..][0..8].*;
+        acc2 += data[i + 16 ..][0..8].*;
+        acc3 += data[i + 24 ..][0..8].*;
+    }
+
+    const combined = acc0 + acc1 + acc2 + acc3;
+    var total: f32 = @reduce(.Add, combined);
+
+    while (i < len) : (i += 1) {
+        total += data[i];
+    }
+
+    return total;
+}

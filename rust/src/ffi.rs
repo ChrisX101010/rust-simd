@@ -6,6 +6,12 @@ unsafe extern "C" {
     fn vector_add_f32(a: *const f32, b: *const f32, out: *mut f32, len: usize);
 
     fn vector_add_f32_simd(a: *const f32, b: *const f32, out: *mut f32, len: usize);
+
+    fn reduce_sum_f32(data: *const f32, len: usize) -> f32;
+
+    fn reduce_sum_f32_simd(data: *const f32, len: usize) -> f32;
+
+    fn reduce_sum_f32_simd_4acc(data: *const f32, len: usize) -> f32;
 }
 
 /// Calls the Zig scalar implementation through the C-compatible ABI.
@@ -65,6 +71,21 @@ pub fn fma_zig_simd(a: &[f32], b: &[f32], c: &[f32], out: &mut [f32]) {
     }
 }
 
+/// Reduces a slice through the Zig scalar backend.
+pub fn reduce_sum_zig(data: &[f32]) -> f32 {
+    unsafe { reduce_sum_f32(data.as_ptr(), data.len()) }
+}
+
+/// Reduces a slice through the Zig SIMD backend.
+pub fn reduce_sum_zig_simd(data: &[f32]) -> f32 {
+    unsafe { reduce_sum_f32_simd(data.as_ptr(), data.len()) }
+}
+
+/// Reduces a slice through the Zig SIMD multi-accumulator backend.
+pub fn reduce_sum_zig_simd_4acc(data: &[f32]) -> f32 {
+    unsafe { reduce_sum_f32_simd_4acc(data.as_ptr(), data.len()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,6 +122,28 @@ mod tests {
     #[test]
     fn ffi_large_input() {
         check_case(100_003);
+    }
+
+    #[test]
+    fn reduction_ffi_matches_reference() {
+        for n in [0, 1, 7, 8, 9, 15, 16, 31, 32, 33, 100_003] {
+            let data: Vec<f32> = (0..n).map(|i| ((i % 997) as f32) * 0.001).collect();
+
+            let reference: f64 = data.iter().map(|&x| x as f64).sum();
+
+            let scalar = reduce_sum_zig(&data) as f64;
+            let simd = reduce_sum_zig_simd(&data) as f64;
+            let simd_4acc = reduce_sum_zig_simd_4acc(&data) as f64;
+
+            for (name, value) in [("scalar", scalar), ("simd", simd), ("simd_4acc", simd_4acc)] {
+                let error = (value - reference).abs();
+
+                assert!(
+                    error <= reference.abs() * 1.0e-5 + 1.0e-2,
+                    "{name} reduction error too large: value={value}, reference={reference}, error={error}"
+                );
+            }
+        }
     }
 
     #[test]
