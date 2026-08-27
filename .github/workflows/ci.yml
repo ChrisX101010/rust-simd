@@ -25,9 +25,7 @@ jobs:
           version: 0.16.0
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@1.95.0
-        with:
-          components: rustfmt, clippy
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
