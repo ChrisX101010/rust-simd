@@ -1,14 +1,18 @@
 [package]
 name = "rust-simd"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Hristo"]
-description = "Experimental Rust and Zig SIMD interoperability and optimization research"
+description = "Safe, backend-neutral SIMD kernels for Rust"
 license = "MIT"
 repository = "https://github.com/ChrisX101010/rust-simd"
 readme = "../README.md"
+exclude = [
+    "build.rs.zig-backend",
+    "src/ffi.rs",
+    "src/bin/**",
+    "vendor/**",
+]
 
 [lib]
 path = "src/lib.rs"
-
-[build-dependencies]

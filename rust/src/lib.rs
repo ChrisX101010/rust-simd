@@ -1,44 +1,68 @@
-pub mod ffi;
-
 mod backend;
+mod error;
+mod simd;
 
-pub use ffi::{
-    dot_zig, dot_zig_simd, fma_zig, fma_zig_simd, reduce_sum_zig, reduce_sum_zig_simd,
-    reduce_sum_zig_simd_4acc, vector_add_zig, vector_add_zig_simd,
-};
+pub use backend::{BackendKind, Engine};
+pub use error::{Result, SimdError};
 
-/// Returns the backend selected for the current CPU.
+/// Returns an engine using the best supported backend for this process.
+#[inline]
+pub fn engine() -> Engine {
+    *backend::auto_engine()
+}
+
+/// Returns the automatically selected backend.
+#[inline]
+pub fn backend() -> BackendKind {
+    engine().backend()
+}
+
+/// Returns the name of the automatically selected backend.
+#[inline]
 pub fn backend_name() -> &'static str {
-    backend::backend_name()
+    engine().backend_name()
 }
 
-/// Element-wise vector addition using the best supported backend.
+/// Checked element-wise vector addition using automatic dispatch.
+#[inline]
+pub fn try_vector_add(a: &[f32], b: &[f32], out: &mut [f32]) -> Result<()> {
+    engine().try_vector_add(a, b, out)
+}
+
+/// Element-wise vector addition using automatic dispatch.
+#[inline]
 pub fn vector_add(a: &[f32], b: &[f32], out: &mut [f32]) {
-    assert_eq!(a.len(), b.len(), "input lengths must match");
-    assert_eq!(a.len(), out.len(), "output length must match");
-
-    backend::vector_add(a, b, out);
+    engine().vector_add(a, b, out);
 }
 
-/// Computes `a * b + c` using the best supported backend.
+/// Checked fused multiply-add using automatic dispatch.
+#[inline]
+pub fn try_fma(a: &[f32], b: &[f32], c: &[f32], out: &mut [f32]) -> Result<()> {
+    engine().try_fma(a, b, c, out)
+}
+
+/// Element-wise fused multiply-add using automatic dispatch.
+#[inline]
 pub fn fma(a: &[f32], b: &[f32], c: &[f32], out: &mut [f32]) {
-    assert_eq!(a.len(), b.len(), "input lengths must match");
-    assert_eq!(a.len(), c.len(), "input lengths must match");
-    assert_eq!(a.len(), out.len(), "output length must match");
-
-    backend::fma(a, b, c, out);
+    engine().fma(a, b, c, out);
 }
 
-/// Computes a sum reduction using the best supported backend.
+/// Computes the sum using automatic dispatch.
+#[inline]
 pub fn reduce_sum(data: &[f32]) -> f32 {
-    backend::reduce_sum(data)
+    engine().reduce_sum(data)
 }
 
-/// Computes a dot product using the best supported backend.
-pub fn dot(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "input lengths must match");
+/// Checked dot product using automatic dispatch.
+#[inline]
+pub fn try_dot(a: &[f32], b: &[f32]) -> Result<f32> {
+    engine().try_dot(a, b)
+}
 
-    backend::dot(a, b)
+/// Computes the dot product using automatic dispatch.
+#[inline]
+pub fn dot(a: &[f32], b: &[f32]) -> f32 {
+    engine().dot(a, b)
 }
 
 #[cfg(test)]
@@ -46,7 +70,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn public_vector_add_basic() {
+    fn automatic_backend_is_known() {
+        assert!(matches!(
+            backend(),
+            BackendKind::Scalar | BackendKind::Avx2 | BackendKind::Avx2Fma
+        ));
+    }
+
+    #[test]
+    fn scalar_engine_is_available() {
+        assert_eq!(Engine::scalar().backend(), BackendKind::Scalar);
+    }
+
+    #[test]
+    fn vector_add_basic() {
         let a = [1.0f32, 2.0, 3.0, 4.0];
         let b = [10.0f32, 20.0, 30.0, 40.0];
         let mut out = [0.0f32; 4];
@@ -57,42 +94,88 @@ mod tests {
     }
 
     #[test]
-    fn public_fma_matches_reference() {
-        let a = [1.0f32, 2.0, 3.0, 4.0];
-        let b = [2.0f32, 3.0, 4.0, 5.0];
-        let c = [10.0f32; 4];
-        let mut out = [0.0f32; 4];
+    fn scalar_engine_vector_add() {
+        let engine = Engine::scalar();
 
-        fma(&a, &b, &c, &mut out);
+        let a = [1.0f32, 2.0, 3.0];
+        let b = [10.0f32, 20.0, 30.0];
+        let mut out = [0.0f32; 3];
 
-        assert_eq!(out, [12.0, 16.0, 22.0, 30.0]);
+        engine.vector_add(&a, &b, &mut out);
+
+        assert_eq!(out, [11.0, 22.0, 33.0]);
     }
 
     #[test]
-    fn public_reduce_sum_matches_reference() {
-        let data = [1.0f32, 2.0, 3.0, 4.0];
+    fn scalar_engine_checked_vector_add() {
+        let engine = Engine::scalar();
 
-        let result = reduce_sum(&data);
-
-        assert!((result - 10.0).abs() <= 1.0e-6);
-    }
-
-    #[test]
-    fn public_dot_matches_reference() {
-        let a = [1.0f32, 2.0, 3.0, 4.0];
-        let b = [5.0f32, 6.0, 7.0, 8.0];
-
-        let result = dot(&a, &b);
-
-        assert!((result - 70.0).abs() <= 1.0e-6);
-    }
-
-    #[test]
-    #[should_panic(expected = "input lengths must match")]
-    fn public_dot_rejects_mismatched_lengths() {
         let a = [1.0f32, 2.0];
         let b = [3.0f32];
+        let mut out = [0.0f32; 2];
 
-        let _ = dot(&a, &b);
+        assert!(matches!(
+            engine.try_vector_add(&a, &b, &mut out),
+            Err(SimdError::InputLengthMismatch { left: 2, right: 1 })
+        ));
+    }
+
+    #[test]
+    fn scalar_engine_fma() {
+        let engine = Engine::scalar();
+
+        let a = [1.0f32, 2.0, 3.0];
+        let b = [2.0f32, 3.0, 4.0];
+        let c = [10.0f32; 3];
+        let mut out = [0.0f32; 3];
+
+        engine.fma(&a, &b, &c, &mut out);
+
+        assert_eq!(out, [12.0, 16.0, 22.0]);
+    }
+
+    #[test]
+    fn scalar_engine_reduce() {
+        let engine = Engine::scalar();
+
+        assert!((engine.reduce_sum(&[1.0, 2.0, 3.0, 4.0]) - 10.0).abs() <= 1e-6);
+    }
+
+    #[test]
+    fn scalar_engine_dot() {
+        let engine = Engine::scalar();
+
+        assert!((engine.dot(&[1.0, 2.0], &[3.0, 4.0]) - 11.0).abs() <= 1e-6);
+    }
+
+    #[test]
+    fn avx2_constructor_reports_cpu_support() {
+        match Engine::avx2() {
+            Ok(engine) => assert_eq!(engine.backend(), BackendKind::Avx2),
+            Err(error) => assert!(matches!(error, SimdError::UnsupportedBackend { .. })),
+        }
+    }
+
+    #[test]
+    fn avx2_fma_constructor_reports_cpu_support() {
+        match Engine::avx2_fma() {
+            Ok(engine) => assert_eq!(engine.backend(), BackendKind::Avx2Fma),
+            Err(error) => assert!(matches!(error, SimdError::UnsupportedBackend { .. })),
+        }
+    }
+
+    #[test]
+    fn large_vector_add() {
+        let n = 100_003;
+
+        let a: Vec<f32> = (0..n).map(|i| (i % 997) as f32).collect();
+        let b: Vec<f32> = (0..n).map(|i| (i % 991) as f32).collect();
+        let mut out = vec![0.0f32; n];
+
+        vector_add(&a, &b, &mut out);
+
+        for i in 0..n {
+            assert_eq!(out[i], a[i] + b[i]);
+        }
     }
 }
