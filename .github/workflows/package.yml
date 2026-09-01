@@ -1,0 +1,63 @@
+name: Package Integrity
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Enforce dependency footprint
+        shell: bash
+        run: |
+          CORE="$(cargo tree -p rust-simd --edges normal --prefix none | wc -l)"
+          TOOL="$(cargo tree -p cargo-simd --edges normal --prefix none | wc -l)"
+
+          echo "rust-simd tree lines: $CORE"
+          echo "cargo-simd tree lines: $TOOL"
+
+          test "$CORE" -eq 1
+          test "$TOOL" -eq 2
+
+      - name: Frozen core
+        run: |
+          cargo check -p rust-simd --frozen
+          cargo test -p rust-simd --frozen
+
+      - name: Frozen tooling
+        run: |
+          cargo check -p cargo-simd --frozen
+          cargo test -p cargo-simd --frozen
+
+      - name: Package
+        run: cargo package --manifest-path rust/Cargo.toml
+
+      - name: Inspect package
+        shell: bash
+        run: |
+          CRATE_FILE="$(find target/package -name 'rust-simd-*.crate' | head -1)"
+
+          test -n "$CRATE_FILE"
+
+          ls -lh "$CRATE_FILE"
+          tar -tzf "$CRATE_FILE"
+
+          if tar -tzf "$CRATE_FILE" | \
+            grep -Eq '/(src/bin|vendor|bench|target)/|build\.rs\.zig-backend|src/ffi\.rs'
+          then
+            echo "ERROR: unwanted package content"
+            exit 1
+          fi
+
+      - name: CLI binary metric
+        shell: bash
+        run: |
+          cargo build -p cargo-simd --release --locked
+          ls -lh target/release/cargo-simd

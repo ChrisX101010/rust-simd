@@ -1,8 +1,10 @@
 mod backend;
+mod capabilities;
 mod error;
 mod simd;
 
 pub use backend::{BackendKind, Engine};
+pub use capabilities::{Architecture, Capabilities, VectorModel};
 pub use error::{Result, SimdError};
 
 /// Returns an engine using the best supported backend for this process.
@@ -73,7 +75,11 @@ mod tests {
     fn automatic_backend_is_known() {
         assert!(matches!(
             backend(),
-            BackendKind::Scalar | BackendKind::Avx2 | BackendKind::Avx2Fma
+            BackendKind::Scalar
+                | BackendKind::Avx2
+                | BackendKind::Avx2Fma
+                | BackendKind::Neon
+                | BackendKind::WasmSimd128
         ));
     }
 
@@ -161,6 +167,30 @@ mod tests {
         match Engine::avx2_fma() {
             Ok(engine) => assert_eq!(engine.backend(), BackendKind::Avx2Fma),
             Err(error) => assert!(matches!(error, SimdError::UnsupportedBackend { .. })),
+        }
+    }
+
+    #[test]
+    fn neon_constructor_reports_platform_support() {
+        match Engine::neon() {
+            Ok(engine) => {
+                assert_eq!(engine.backend(), BackendKind::Neon);
+            }
+            Err(error) => {
+                assert!(matches!(error, SimdError::UnsupportedBackend { .. }));
+            }
+        }
+    }
+
+    #[test]
+    fn wasm_simd128_constructor_reports_build_support() {
+        match Engine::wasm_simd128() {
+            Ok(engine) => {
+                assert_eq!(engine.backend(), BackendKind::WasmSimd128);
+            }
+            Err(error) => {
+                assert!(matches!(error, SimdError::UnsupportedBackend { .. }));
+            }
         }
     }
 

@@ -1,0 +1,73 @@
+name: Portability
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - wasm32-unknown-unknown
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Warning-free compile
+        env:
+          RUSTFLAGS: -Dwarnings
+        run: cargo check -p rust-simd --target ${{ matrix.target }} --locked
+
+  wasm-simd128:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - run: rustup target add wasm32-unknown-unknown
+
+      - name: Warning-free SIMD128 compile
+        env:
+          RUSTFLAGS: -Dwarnings -Ctarget-feature=+simd128
+        run: cargo check -p rust-simd --target wasm32-unknown-unknown --locked
+
+  wasm-runtime:
+    name: WASM SIMD128 runtime
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install WASI target
+        run: rustup target add wasm32-wasip1
+
+      - name: Setup Wasmtime
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+
+      - name: Build WASM SIMD128 smoke binary
+        env:
+          RUSTFLAGS: -Dwarnings -Ctarget-feature=+simd128
+        run: |
+          cargo build \
+            --manifest-path integration/wasm-smoke/Cargo.toml \
+            --target wasm32-wasip1 \
+            --release
+
+      - name: Execute WASM SIMD128 backend
+        run: |
+          wasmtime \
+            integration/wasm-smoke/target/wasm32-wasip1/release/rust-simd-wasm-smoke.wasm

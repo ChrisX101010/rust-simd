@@ -1,28 +1,36 @@
 use std::sync::OnceLock;
 
+use crate::capabilities::Capabilities;
+
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
 use crate::simd;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BackendKind {
     Scalar,
     Avx2,
     Avx2Fma,
+    Neon,
+    WasmSimd128,
 }
 
 impl BackendKind {
+    #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Scalar => "scalar",
             Self::Avx2 => "avx2",
             Self::Avx2Fma => "avx2+fma",
+            Self::Neon => "neon",
+            Self::WasmSimd128 => "wasm-simd128",
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BackendAvailability {
-    Available,
-    Unsupported,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -31,99 +39,89 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Creates an engine using the best backend supported by the current CPU.
+    /// Creates an engine using the fastest implemented backend
+    /// supported by this process.
+    #[must_use]
     pub fn auto() -> Self {
         Self {
-            kind: select_backend(),
+            kind: Capabilities::detect().best_backend(),
         }
     }
 
-    /// Creates a scalar engine.
+    #[must_use]
     pub const fn scalar() -> Self {
         Self {
             kind: BackendKind::Scalar,
         }
     }
 
-    /// Creates an AVX2 engine when AVX2 is supported.
     pub fn avx2() -> crate::Result<Self> {
-        if backend_available(BackendKind::Avx2) == BackendAvailability::Available {
-            Ok(Self {
-                kind: BackendKind::Avx2,
-            })
-        } else {
-            Err(crate::SimdError::UnsupportedBackend {
-                backend: BackendKind::Avx2.name(),
-            })
-        }
+        Self::for_backend(BackendKind::Avx2)
     }
 
-    /// Creates an AVX2+FMA engine when both instruction sets are supported.
     pub fn avx2_fma() -> crate::Result<Self> {
-        if backend_available(BackendKind::Avx2Fma) == BackendAvailability::Available {
-            Ok(Self {
-                kind: BackendKind::Avx2Fma,
-            })
+        Self::for_backend(BackendKind::Avx2Fma)
+    }
+
+    pub fn neon() -> crate::Result<Self> {
+        Self::for_backend(BackendKind::Neon)
+    }
+
+    pub fn wasm_simd128() -> crate::Result<Self> {
+        Self::for_backend(BackendKind::WasmSimd128)
+    }
+
+    fn for_backend(kind: BackendKind) -> crate::Result<Self> {
+        if backend_available(Capabilities::detect(), kind) {
+            Ok(Self { kind })
         } else {
             Err(crate::SimdError::UnsupportedBackend {
-                backend: BackendKind::Avx2Fma.name(),
+                backend: kind.name(),
             })
         }
     }
 
-    /// Returns the backend used by this engine.
+    #[must_use]
     pub const fn backend(self) -> BackendKind {
         self.kind
     }
 
-    /// Returns the human-readable backend name.
+    #[must_use]
     pub const fn backend_name(self) -> &'static str {
         self.kind.name()
     }
 
-    /// Performs checked element-wise vector addition.
-    ///
-    /// The supplied slices must have matching lengths.
     #[inline]
     pub fn try_vector_add(self, a: &[f32], b: &[f32], out: &mut [f32]) -> crate::Result<()> {
         crate::error::validate_binary_inputs(a, b, Some(out))?;
+
         self.vector_add_unchecked_contract(a, b, out);
+
         Ok(())
     }
 
-    /// Performs element-wise vector addition.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the slices have incompatible lengths.
     #[inline]
     pub fn vector_add(self, a: &[f32], b: &[f32], out: &mut [f32]) {
         self.try_vector_add(a, b, out)
             .expect("invalid vector_add arguments");
     }
 
-    /// Performs checked fused multiply-add.
-    ///
-    /// Computes `out[i] = a[i] * b[i] + c[i]`.
     #[inline]
     pub fn try_fma(self, a: &[f32], b: &[f32], c: &[f32], out: &mut [f32]) -> crate::Result<()> {
         crate::error::validate_fma_inputs(a, b, c, out)?;
+
         self.fma_unchecked_contract(a, b, c, out);
+
         Ok(())
     }
 
-    /// Performs element-wise fused multiply-add.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the slices have incompatible lengths.
     #[inline]
     pub fn fma(self, a: &[f32], b: &[f32], c: &[f32], out: &mut [f32]) {
         self.try_fma(a, b, c, out).expect("invalid fma arguments");
     }
 
-    /// Computes a sum reduction.
     #[inline]
+    #[must_use]
     pub fn reduce_sum(self, data: &[f32]) -> f32 {
         match self.kind {
             BackendKind::Scalar => scalar_reduce_sum(data),
@@ -131,33 +129,50 @@ impl Engine {
             BackendKind::Avx2 | BackendKind::Avx2Fma => {
                 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                 {
-                    // SAFETY:
-                    // An AVX2 engine can only be constructed after runtime
-                    // AVX2 capability detection succeeds.
-                    unsafe { simd::reduce_sum_avx2_4acc(data) }
+                    // SAFETY: Engine construction proves AVX2
+                    // support before this backend can be selected.
+                    return unsafe { simd::reduce_sum_avx2_4acc(data) };
                 }
 
-                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+                #[allow(unreachable_code)]
+                scalar_reduce_sum(data)
+            }
+
+            BackendKind::Neon => {
+                #[cfg(target_arch = "aarch64")]
                 {
-                    scalar_reduce_sum(data)
+                    // SAFETY: Engine construction proves NEON
+                    // support before this backend can be selected.
+                    return unsafe { simd::reduce_sum_neon_4acc(data) };
                 }
+
+                #[allow(unreachable_code)]
+                scalar_reduce_sum(data)
+            }
+
+            BackendKind::WasmSimd128 => {
+                #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                {
+                    // SAFETY: this code only exists in a
+                    // simd128-enabled WebAssembly build.
+                    return unsafe { simd::reduce_sum_wasm_simd128_4acc(data) };
+                }
+
+                #[allow(unreachable_code)]
+                scalar_reduce_sum(data)
             }
         }
     }
 
-    /// Computes a checked dot product.
     #[inline]
     pub fn try_dot(self, a: &[f32], b: &[f32]) -> crate::Result<f32> {
         crate::error::validate_binary_inputs(a, b, None)?;
+
         Ok(self.dot_unchecked_contract(a, b))
     }
 
-    /// Computes the dot product.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the slices have different lengths.
     #[inline]
+    #[must_use]
     pub fn dot(self, a: &[f32], b: &[f32]) -> f32 {
         self.try_dot(a, b).expect("invalid dot arguments")
     }
@@ -165,21 +180,54 @@ impl Engine {
     #[inline]
     fn vector_add_unchecked_contract(self, a: &[f32], b: &[f32], out: &mut [f32]) {
         match self.kind {
-            BackendKind::Scalar => scalar_vector_add(a, b, out),
+            BackendKind::Scalar => {
+                scalar_vector_add(a, b, out);
+            }
 
             BackendKind::Avx2 | BackendKind::Avx2Fma => {
                 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                 {
-                    // SAFETY:
-                    // This path is reachable only for an Engine created through
-                    // a validated AVX2 constructor or automatic dispatch.
-                    unsafe { simd::vector_add_avx2(a, b, out) }
+                    // SAFETY: backend selection proves AVX2.
+                    unsafe {
+                        simd::vector_add_avx2(a, b, out);
+                    }
+
+                    return;
                 }
 
-                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+                #[allow(unreachable_code)]
+                scalar_vector_add(a, b, out);
+            }
+
+            BackendKind::Neon => {
+                #[cfg(target_arch = "aarch64")]
                 {
-                    scalar_vector_add(a, b, out)
+                    // SAFETY: backend selection proves NEON.
+                    unsafe {
+                        simd::vector_add_neon(a, b, out);
+                    }
+
+                    return;
                 }
+
+                #[allow(unreachable_code)]
+                scalar_vector_add(a, b, out);
+            }
+
+            BackendKind::WasmSimd128 => {
+                #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                {
+                    // SAFETY: this backend only exists in a
+                    // simd128-enabled WebAssembly build.
+                    unsafe {
+                        simd::vector_add_wasm_simd128(a, b, out);
+                    }
+
+                    return;
+                }
+
+                #[allow(unreachable_code)]
+                scalar_vector_add(a, b, out);
             }
         }
     }
@@ -187,22 +235,42 @@ impl Engine {
     #[inline]
     fn fma_unchecked_contract(self, a: &[f32], b: &[f32], c: &[f32], out: &mut [f32]) {
         match self.kind {
-            BackendKind::Scalar | BackendKind::Avx2 => {
+            BackendKind::Scalar | BackendKind::Avx2 | BackendKind::WasmSimd128 => {
+                // Baseline WebAssembly SIMD128 has no strict
+                // fused f32 multiply-add instruction matching
+                // Rust f32::mul_add semantics, so preserve the
+                // numerical contract through the scalar kernel.
                 scalar_fma(a, b, c, out);
             }
 
             BackendKind::Avx2Fma => {
                 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                 {
-                    // SAFETY:
-                    // This path is reachable only after AVX2+FMA detection.
-                    unsafe { simd::fma_avx2_fma(a, b, c, out) }
+                    // SAFETY: backend selection proves AVX2+FMA.
+                    unsafe {
+                        simd::fma_avx2_fma(a, b, c, out);
+                    }
+
+                    return;
                 }
 
-                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+                #[allow(unreachable_code)]
+                scalar_fma(a, b, c, out);
+            }
+
+            BackendKind::Neon => {
+                #[cfg(target_arch = "aarch64")]
                 {
-                    scalar_fma(a, b, c, out);
+                    // SAFETY: backend selection proves NEON.
+                    unsafe {
+                        simd::fma_neon(a, b, c, out);
+                    }
+
+                    return;
                 }
+
+                #[allow(unreachable_code)]
+                scalar_fma(a, b, c, out);
             }
         }
     }
@@ -215,16 +283,35 @@ impl Engine {
             BackendKind::Avx2 | BackendKind::Avx2Fma => {
                 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                 {
-                    // SAFETY:
-                    // An AVX2 engine can only be constructed after runtime
-                    // AVX2 capability detection succeeds.
-                    unsafe { simd::dot_avx2(a, b) }
+                    // SAFETY: backend selection proves AVX2.
+                    return unsafe { simd::dot_avx2_4acc(a, b) };
                 }
 
-                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+                #[allow(unreachable_code)]
+                scalar_dot(a, b)
+            }
+
+            BackendKind::Neon => {
+                #[cfg(target_arch = "aarch64")]
                 {
-                    scalar_dot(a, b)
+                    // SAFETY: backend selection proves NEON.
+                    return unsafe { simd::dot_neon_4acc(a, b) };
                 }
+
+                #[allow(unreachable_code)]
+                scalar_dot(a, b)
+            }
+
+            BackendKind::WasmSimd128 => {
+                #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                {
+                    // SAFETY: this backend only exists in a
+                    // simd128-enabled WebAssembly build.
+                    return unsafe { simd::dot_wasm_simd128_4acc(a, b) };
+                }
+
+                #[allow(unreachable_code)]
+                scalar_dot(a, b)
             }
         }
     }
@@ -237,45 +324,17 @@ pub(crate) fn auto_engine() -> &'static Engine {
     AUTO_ENGINE.get_or_init(Engine::auto)
 }
 
-fn select_backend() -> BackendKind {
-    if backend_available(BackendKind::Avx2Fma) == BackendAvailability::Available {
-        return BackendKind::Avx2Fma;
-    }
-
-    if backend_available(BackendKind::Avx2) == BackendAvailability::Available {
-        return BackendKind::Avx2;
-    }
-
-    BackendKind::Scalar
-}
-
-fn backend_available(kind: BackendKind) -> BackendAvailability {
+fn backend_available(capabilities: Capabilities, kind: BackendKind) -> bool {
     match kind {
-        BackendKind::Scalar => BackendAvailability::Available,
+        BackendKind::Scalar => true,
 
-        BackendKind::Avx2 => {
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            {
-                if std::arch::is_x86_feature_detected!("avx2") {
-                    return BackendAvailability::Available;
-                }
-            }
+        BackendKind::Avx2 => capabilities.has_avx2(),
 
-            BackendAvailability::Unsupported
-        }
+        BackendKind::Avx2Fma => capabilities.has_avx2() && capabilities.has_fma(),
 
-        BackendKind::Avx2Fma => {
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            {
-                if std::arch::is_x86_feature_detected!("avx2")
-                    && std::arch::is_x86_feature_detected!("fma")
-                {
-                    return BackendAvailability::Available;
-                }
-            }
+        BackendKind::Neon => capabilities.has_neon(),
 
-            BackendAvailability::Unsupported
-        }
+        BackendKind::WasmSimd128 => capabilities.has_wasm_simd128(),
     }
 }
 

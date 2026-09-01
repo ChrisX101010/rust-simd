@@ -1,0 +1,18 @@
+[package]
+name = "cargo-simd"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "Lightweight SIMD diagnostics, verification, and resource-aware Cargo tooling for Rust"
+license = "MIT"
+repository = "https://github.com/ChrisX101010/rust-simd"
+homepage = "https://github.com/ChrisX101010/rust-simd"
+keywords = ["simd", "cargo", "performance", "optimization"]
+categories = ["development-tools", "command-line-utilities"]
+
+[[bin]]
+name = "cargo-simd"
+path = "src/main.rs"
+
+[dependencies]
+rust-simd = { version = "0.4.0", path = "../../rust" }

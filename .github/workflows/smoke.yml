@@ -1,0 +1,54 @@
+name: Real-world Smoke
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install local cargo-simd
+        run: cargo install --path crates/cargo-simd --force
+
+      - name: ripgrep project
+        shell: bash
+        run: |
+          git clone --depth 1 \
+            https://github.com/BurntSushi/ripgrep \
+            /tmp/ripgrep
+
+          cd /tmp/ripgrep
+
+          cargo simd doctor
+          cargo simd build --dry-run --release
+          cargo simd test --dry-run
+
+      - name: Tokio workspace
+        shell: bash
+        run: |
+          git clone --depth 1 \
+            https://github.com/tokio-rs/tokio \
+            /tmp/tokio
+
+          cd /tmp/tokio
+
+          cargo simd doctor
+          cargo simd build --dry-run
+          cargo simd test --dry-run --workspace
+
+          cd /tmp/tokio/tokio
+
+          OUTPUT="$(cargo simd doctor)"
+
+          echo "$OUTPUT"
+
+          echo "$OUTPUT" | grep -F "/tmp/tokio"
