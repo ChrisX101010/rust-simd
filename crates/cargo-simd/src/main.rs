@@ -2,6 +2,7 @@ mod doctor;
 mod orchestrator;
 mod policy;
 mod project;
+mod report;
 mod system;
 mod verify;
 
@@ -31,7 +32,6 @@ fn main() -> ExitCode {
 
         Some("version") | Some("--version") | Some("-V") => {
             println!("cargo-simd {}", env!("CARGO_PKG_VERSION"));
-
             ExitCode::SUCCESS
         }
 
@@ -62,6 +62,14 @@ COMMANDS:
     help      Print this help
     version   Print cargo-simd version
 
+VERIFY:
+    cargo simd verify
+    cargo simd verify --json
+    cargo simd verify --backend scalar
+    cargo simd verify --backend avx2
+    cargo simd verify --backend avx2+fma
+    cargo simd verify --json --backend scalar
+
 BUILD:
     cargo simd build
     cargo simd build --release
@@ -87,6 +95,7 @@ EXAMPLES:
     cargo simd doctor
     cargo simd doctor --deep
     cargo simd verify
+    cargo simd verify --json
     cargo simd build --release
     cargo simd test --workspace
 "
