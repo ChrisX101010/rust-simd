@@ -1,6 +1,8 @@
-use std::{fmt, process::ExitCode};
+use std::process::ExitCode;
 
 use rust_simd::Engine;
+
+use crate::report::{CheckStatus, FailureRecord, VerificationReport};
 
 const LENGTHS: &[usize] = &[
     0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1023,
@@ -11,6 +13,7 @@ const LENGTHS: &[usize] = &[
 struct VerificationFailure {
     backend: &'static str,
     operation: &'static str,
+    case_name: Option<&'static str>,
     length: usize,
     index: Option<usize>,
     actual: f32,
@@ -19,75 +22,153 @@ struct VerificationFailure {
     tolerance: f64,
 }
 
-impl fmt::Display for VerificationFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "SIMD verification: FAILED")?;
-        writeln!(f)?;
-        writeln!(f, "  backend            {}", self.backend)?;
-        writeln!(f, "  operation          {}", self.operation)?;
-        writeln!(f, "  length             {}", self.length)?;
-
-        if let Some(index) = self.index {
-            writeln!(f, "  index              {index}")?;
+impl From<VerificationFailure> for FailureRecord {
+    fn from(failure: VerificationFailure) -> Self {
+        Self {
+            backend: failure.backend.to_owned(),
+            operation: failure.operation.to_owned(),
+            case_name: failure.case_name.map(str::to_owned),
+            length: failure.length,
+            index: failure.index,
+            actual: failure.actual,
+            expected: failure.expected,
+            error: failure.error,
+            tolerance: failure.tolerance,
         }
-
-        writeln!(f, "  actual             {}", self.actual)?;
-        writeln!(f, "  expected           {}", self.expected)?;
-        writeln!(f, "  absolute error     {}", self.error)?;
-        writeln!(f, "  tolerance          {}", self.tolerance)?;
-
-        Ok(())
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct VerifyOptions {
+    json: bool,
+    backend: Option<String>,
+}
+
 pub fn run(args: &[String]) -> ExitCode {
-    if !args.is_empty() {
-        eprintln!("error: verify currently takes no arguments");
-        return ExitCode::from(2);
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_help();
+        return ExitCode::SUCCESS;
     }
 
-    let engines = available_engines();
+    let options = match parse_options(args) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return ExitCode::from(2);
+        }
+    };
 
-    println!("cargo-simd verify");
-    println!();
-    println!("available backends:");
+    let engines = match select_engines(options.backend.as_deref()) {
+        Ok(engines) => engines,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return ExitCode::from(2);
+        }
+    };
 
-    for engine in &engines {
-        println!("  - {}", engine.backend_name());
+    let report = run_verification(&engines, options.backend.clone());
+
+    if options.json {
+        println!("{}", report.to_json());
+    } else {
+        print!("{}", report.to_text());
     }
 
-    println!();
-    println!("running differential verification...");
+    if report.passed() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
 
-    for &length in LENGTHS {
-        if let Err(failure) = verify_length(length, &engines) {
-            eprintln!();
-            eprintln!("{failure}");
-            return ExitCode::from(1);
+fn parse_options(args: &[String]) -> Result<VerifyOptions, String> {
+    let mut options = VerifyOptions::default();
+    let mut index = 0;
+
+    while index < args.len() {
+        let argument = &args[index];
+
+        match argument.as_str() {
+            "--json" => {
+                options.json = true;
+                index += 1;
+            }
+
+            "--backend" => {
+                if options.backend.is_some() {
+                    return Err("`--backend` may only be specified once".to_owned());
+                }
+
+                let Some(value) = args.get(index + 1) else {
+                    return Err("`--backend` requires a backend name".to_owned());
+                };
+
+                if value.starts_with('-') {
+                    return Err("`--backend` requires a backend name".to_owned());
+                }
+
+                options.backend = Some(value.clone());
+                index += 2;
+            }
+
+            _ if argument.starts_with("--backend=") => {
+                if options.backend.is_some() {
+                    return Err("`--backend` may only be specified once".to_owned());
+                }
+
+                let value = argument
+                    .strip_prefix("--backend=")
+                    .expect("prefix was checked");
+
+                if value.is_empty() {
+                    return Err("`--backend` requires a backend name".to_owned());
+                }
+
+                options.backend = Some(value.to_owned());
+                index += 1;
+            }
+
+            _ => {
+                return Err(format!(
+                    "unknown verify argument `{argument}`; use `cargo simd verify --help`"
+                ));
+            }
         }
     }
 
-    println!("running structured numerical cases...");
+    Ok(options)
+}
 
-    if let Err(failure) = verify_numerical_cases(&engines) {
-        eprintln!();
-        eprintln!("{failure}");
-        return ExitCode::from(1);
-    }
+fn select_engines(backend: Option<&str>) -> Result<Vec<Engine>, String> {
+    let Some(backend) = backend else {
+        return Ok(available_engines());
+    };
 
-    println!();
-    println!("verification summary");
-    println!("  lengths tested     {}", LENGTHS.len());
-    println!("  backends tested    {}", engines.len());
-    println!("  numerical cases    PASS");
-    println!("  vector_add         PASS");
-    println!("  fma                PASS");
-    println!("  reduce_sum         PASS");
-    println!("  dot                PASS");
-    println!();
-    println!("SIMD verification: PASS");
+    let engine = match backend {
+        "scalar" => Engine::scalar(),
 
-    ExitCode::SUCCESS
+        "avx2" => Engine::avx2().map_err(|_| unavailable_backend_error("avx2"))?,
+
+        "avx2+fma" => Engine::avx2_fma().map_err(|_| unavailable_backend_error("avx2+fma"))?,
+
+        "neon" => Engine::neon().map_err(|_| unavailable_backend_error("neon"))?,
+
+        "wasm-simd128" => {
+            Engine::wasm_simd128().map_err(|_| unavailable_backend_error("wasm-simd128"))?
+        }
+
+        other => {
+            return Err(format!(
+                "unknown backend `{other}`; expected one of: scalar, avx2, avx2+fma, neon, wasm-simd128"
+            ));
+        }
+    };
+
+    Ok(vec![engine])
+}
+
+fn unavailable_backend_error(backend: &str) -> String {
+    format!("backend `{backend}` is not available on this machine/build")
 }
 
 fn available_engines() -> Vec<Engine> {
@@ -112,11 +193,63 @@ fn available_engines() -> Vec<Engine> {
     engines
 }
 
+fn run_verification(engines: &[Engine], backend_filter: Option<String>) -> VerificationReport {
+    let backend_names = engines
+        .iter()
+        .map(|engine| engine.backend_name().to_owned())
+        .collect();
+
+    let mut report = VerificationReport::new(backend_filter, backend_names, LENGTHS.to_vec());
+
+    for &length in LENGTHS {
+        match verify_length(length, engines) {
+            Ok(()) => {
+                report.lengths_completed += 1;
+            }
+
+            Err(failure) => {
+                mark_operation_failure(&mut report, failure.operation);
+                report.failures.push(failure.into());
+                return report;
+            }
+        }
+    }
+
+    report.vector_add = CheckStatus::Pass;
+    report.fma = CheckStatus::Pass;
+    report.reduce_sum = CheckStatus::Pass;
+    report.dot = CheckStatus::Pass;
+
+    match verify_numerical_cases(engines) {
+        Ok(()) => {
+            report.numerical_cases = CheckStatus::Pass;
+        }
+
+        Err(failure) => {
+            report.numerical_cases = CheckStatus::Fail;
+            mark_operation_failure(&mut report, failure.operation);
+            report.failures.push(failure.into());
+        }
+    }
+
+    report
+}
+
+fn mark_operation_failure(report: &mut VerificationReport, operation: &str) {
+    if operation.starts_with("vector_add") {
+        report.vector_add = CheckStatus::Fail;
+    } else if operation == "fma" {
+        report.fma = CheckStatus::Fail;
+    } else if operation == "reduce_sum" {
+        report.reduce_sum = CheckStatus::Fail;
+    } else if operation == "dot" {
+        report.dot = CheckStatus::Fail;
+    }
+}
+
 fn verify_length(length: usize, engines: &[Engine]) -> Result<(), VerificationFailure> {
     let a = make_data(length, 0x1234_5678_9abc_def0);
-
     let b = make_data(length, 0xfedc_ba98_7654_3210);
-
     let c = make_data(length, 0x0f0f_f0f0_55aa_aa55);
 
     let sum_reference = a.iter().map(|&value| value as f64).sum::<f64>();
@@ -135,6 +268,7 @@ fn verify_length(length: usize, engines: &[Engine]) -> Result<(), VerificationFa
         check_close(
             engine.backend_name(),
             "reduce_sum",
+            None,
             length,
             None,
             engine.reduce_sum(&a),
@@ -144,6 +278,7 @@ fn verify_length(length: usize, engines: &[Engine]) -> Result<(), VerificationFa
         check_close(
             engine.backend_name(),
             "dot",
+            None,
             length,
             None,
             engine.dot(&a, &b),
@@ -166,6 +301,7 @@ fn verify_vector_add(engine: Engine, a: &[f32], b: &[f32]) -> Result<(), Verific
             return Err(VerificationFailure {
                 backend: engine.backend_name(),
                 operation: "vector_add",
+                case_name: None,
                 length: a.len(),
                 index: Some(index),
                 actual: output[index],
@@ -190,6 +326,7 @@ fn verify_fma(engine: Engine, a: &[f32], b: &[f32], c: &[f32]) -> Result<(), Ver
         check_close(
             engine.backend_name(),
             "fma",
+            None,
             a.len(),
             Some(index),
             output[index],
@@ -242,7 +379,7 @@ fn verify_numerical_cases(engines: &[Engine]) -> Result<(), VerificationFailure>
 
 fn verify_finite_case(
     engines: &[Engine],
-    _case_name: &'static str,
+    case_name: &'static str,
     a: &[f32],
     b: &[f32],
     c: &[f32],
@@ -256,13 +393,14 @@ fn verify_finite_case(
         .sum::<f64>();
 
     for engine in engines {
-        verify_vector_add(*engine, a, b)?;
+        verify_vector_add(*engine, a, b).map_err(|failure| with_case(failure, case_name))?;
 
-        verify_fma(*engine, a, b, c)?;
+        verify_fma(*engine, a, b, c).map_err(|failure| with_case(failure, case_name))?;
 
         check_close(
             engine.backend_name(),
             "reduce_sum",
+            Some(case_name),
             a.len(),
             None,
             engine.reduce_sum(a),
@@ -272,6 +410,7 @@ fn verify_finite_case(
         check_close(
             engine.backend_name(),
             "dot",
+            Some(case_name),
             a.len(),
             None,
             engine.dot(a, b),
@@ -307,6 +446,7 @@ fn verify_non_finite_elementwise(engines: &[Engine]) -> Result<(), VerificationF
                 return Err(VerificationFailure {
                     backend: engine.backend_name(),
                     operation: "vector_add/non-finite",
+                    case_name: Some("non-finite"),
                     length: a.len(),
                     index: Some(index),
                     actual: output[index],
@@ -321,9 +461,15 @@ fn verify_non_finite_elementwise(engines: &[Engine]) -> Result<(), VerificationF
     Ok(())
 }
 
+fn with_case(mut failure: VerificationFailure, case_name: &'static str) -> VerificationFailure {
+    failure.case_name = Some(case_name);
+    failure
+}
+
 fn check_close(
     backend: &'static str,
     operation: &'static str,
+    case_name: Option<&'static str>,
     length: usize,
     index: Option<usize>,
     value: f32,
@@ -337,6 +483,7 @@ fn check_close(
         return Err(VerificationFailure {
             backend,
             operation,
+            case_name,
             length,
             index,
             actual: value,
@@ -354,6 +501,7 @@ fn check_close(
         return Err(VerificationFailure {
             backend,
             operation,
+            case_name,
             length,
             index,
             actual: value,
@@ -364,7 +512,6 @@ fn check_close(
     }
 
     let error = (value as f64 - reference).abs();
-
     let tolerance = reference.abs() * 1.0e-4 + 1.0e-2;
 
     if error <= tolerance {
@@ -374,6 +521,7 @@ fn check_close(
     Err(VerificationFailure {
         backend,
         operation,
+        case_name,
         length,
         index,
         actual: value,
@@ -412,49 +560,159 @@ fn pseudo_random_value(index: usize, seed: u64) -> f32 {
     signed as f32 * 0.001
 }
 
+fn print_help() {
+    println!(
+        "\
+cargo-simd verify — differential SIMD backend verification
+
+USAGE:
+    cargo simd verify [OPTIONS]
+
+OPTIONS:
+    --json
+        Emit a machine-readable JSON report to stdout.
+
+    --backend <BACKEND>
+        Verify only one backend.
+
+        Supported backend names:
+            scalar
+            avx2
+            avx2+fma
+            neon
+            wasm-simd128
+
+    -h, --help
+        Print this help.
+
+EXIT CODES:
+    0    Verification passed
+    1    Verification failed
+    2    Invalid arguments or unavailable backend
+
+EXAMPLES:
+    cargo simd verify
+    cargo simd verify --json
+    cargo simd verify --backend scalar
+    cargo simd verify --backend avx2
+    cargo simd verify --backend avx2+fma
+    cargo simd verify --json --backend scalar
+"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn deterministic_data_generation() {
-        assert_eq!(pseudo_random_value(42, 123), pseudo_random_value(42, 123),);
+        assert_eq!(pseudo_random_value(42, 123), pseudo_random_value(42, 123));
     }
 
     #[test]
     fn different_seeds_change_generated_data() {
-        assert_ne!(pseudo_random_value(42, 123), pseudo_random_value(42, 456),);
+        assert_ne!(pseudo_random_value(42, 123), pseudo_random_value(42, 456));
     }
 
     #[test]
     fn scalar_verification_handles_tail_length() {
-        assert!(verify_length(33, &[Engine::scalar()],).is_ok());
+        assert!(verify_length(33, &[Engine::scalar()]).is_ok());
     }
 
     #[test]
     fn scalar_verification_handles_empty_input() {
-        assert!(verify_length(0, &[Engine::scalar()],).is_ok());
+        assert!(verify_length(0, &[Engine::scalar()]).is_ok());
     }
 
     #[test]
     fn scalar_numerical_cases_pass() {
-        assert!(verify_numerical_cases(&[Engine::scalar()],).is_ok());
+        assert!(verify_numerical_cases(&[Engine::scalar()]).is_ok());
     }
 
     #[test]
     fn close_check_rejects_large_error() {
-        let failure = check_close("test", "dot", 4, None, 100.0, 1.0);
+        let failure = check_close("test", "dot", None, 4, None, 100.0, 1.0);
 
         assert!(failure.is_err());
     }
 
     #[test]
     fn nan_comparison_uses_classification() {
-        assert!(same_float(f32::NAN, f32::NAN,));
+        assert!(same_float(f32::NAN, f32::NAN));
     }
 
     #[test]
     fn signed_zero_is_numerically_equal() {
-        assert!(same_float(0.0, -0.0,));
+        assert!(same_float(0.0, -0.0));
+    }
+
+    #[test]
+    fn parser_accepts_json() {
+        let args = vec!["--json".to_owned()];
+
+        let options = parse_options(&args).expect("JSON option should parse");
+
+        assert!(options.json);
+        assert_eq!(options.backend, None);
+    }
+
+    #[test]
+    fn parser_accepts_backend() {
+        let args = vec!["--backend".to_owned(), "scalar".to_owned()];
+
+        let options = parse_options(&args).expect("backend option should parse");
+
+        assert_eq!(options.backend.as_deref(), Some("scalar"));
+    }
+
+    #[test]
+    fn parser_accepts_backend_equals_form() {
+        let args = vec!["--backend=scalar".to_owned()];
+
+        let options = parse_options(&args).expect("backend option should parse");
+
+        assert_eq!(options.backend.as_deref(), Some("scalar"));
+    }
+
+    #[test]
+    fn parser_rejects_unknown_argument() {
+        let args = vec!["--wat".to_owned()];
+
+        assert!(parse_options(&args).is_err());
+    }
+
+    #[test]
+    fn parser_rejects_duplicate_backend() {
+        let args = vec![
+            "--backend".to_owned(),
+            "scalar".to_owned(),
+            "--backend".to_owned(),
+            "scalar".to_owned(),
+        ];
+
+        assert!(parse_options(&args).is_err());
+    }
+
+    #[test]
+    fn scalar_backend_can_be_selected() {
+        let engines = select_engines(Some("scalar")).expect("scalar is always available");
+
+        assert_eq!(engines.len(), 1);
+        assert_eq!(engines[0].backend_name(), "scalar");
+    }
+
+    #[test]
+    fn unknown_backend_is_rejected() {
+        assert!(select_engines(Some("definitely-not-a-backend")).is_err());
+    }
+
+    #[test]
+    fn passing_scalar_report_is_structured() {
+        let report = run_verification(&[Engine::scalar()], Some("scalar".to_owned()));
+
+        assert!(report.passed());
+        assert_eq!(report.lengths_completed, LENGTHS.len());
+        assert_eq!(report.backends, vec!["scalar".to_owned()]);
     }
 }
